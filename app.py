@@ -1,15 +1,17 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request
 
 app = Flask(__name__)
 
-@app.route("/", methods=["GET"])
-def home():
-    return "Webhook funcionando 🚀", 200
-
-# Acepta POST tanto en / como en /webhook (por si MP pega a la raíz)
-@app.route("/", methods=["POST"])
-@app.route("/webhook", methods=["POST"])
+# Acepta GET y POST tanto en "/" como en "/webhook"
+@app.route("/", methods=["GET", "POST"])
+@app.route("/webhook", methods=["GET", "POST"])
 def webhook():
-    data = request.get_json(silent=True) or {}
-    print("📩 Notificación recibida:", data)
-    return jsonify({"status": "ok"}), 200
+    # Log muy verboso para ver qué llega
+    body = request.get_data(as_text=True)  # crudo
+    print("📥 METHOD:", request.method)
+    print("📥 HEADERS:", dict(request.headers))
+    print("📥 BODY:", body)
+    return "ok", 200
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8080)
