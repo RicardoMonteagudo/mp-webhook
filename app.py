@@ -3,48 +3,36 @@ import os, requests
 
 app = Flask(__name__)
 
-MP_ACCESS_TOKEN = os.getenv("MP_ACCESS_TOKEN")  # <-- ponlo como variable de entorno en Cloud Run
+MP_ACCESS_TOKEN = os.getenv("MP_ACCESS_TOKEN")  # opcional
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    # 1) Leer datos sin importar el content-type
-    body = {}
+    # 1) Armar un payload unificado sin forzar tipo de contenido
+    payload = {}
     if request.is_json:
-        body = request.get_json(silent=True) or {}
-    else:
-        # IPN suele venir como form-encoded o incluso solo en la query string
-        body = request.form.to_dict() if request.form else {}
+        payload.update(request.get_json(silent=True) or {})
+    payload.update(request.form.to_dict())
+    payload.update(request.args.to_dict())
 
-    # 2) También leer query string (IPN acostumbra enviar ?topic=...&id=...)
-    topic = body.get("topic") or request.args.get("topic")
-    resource_id = body.get("id") or request.args.get("id")
+    print("📩 Headers:", dict(request.headers), flush=True)
+    print("📦 Payload:", payload, flush=True)
 
-    print("📩 Notificación recibida | body:", body, "| args:", dict(request.args), flush=True)
-
-    # 3) Si es un pago, traer los detalles (monto, estado, etc.)
+    # 2) (Opcional) Si vino un pago, consultar detalles a la API
+    topic = payload.get("topic")
+    resource_id = payload.get("id") or payload.get("resource_id")
     if topic == "payment" and resource_id and MP_ACCESS_TOKEN:
         try:
-            url = f"https://api.mercadopago.com/v1/payments/{resource_id}"
-            headers = {"Authorization": f"Bearer {MP_ACCESS_TOKEN}"}
-            r = requests.get(url, headers=headers, timeout=10)
-            r.raise_for_status()
-            payment = r.json()
-
-            # Datos útiles
-            status = payment.get("status")
-            amount = payment.get("transaction_amount")
-            payer_email = (payment.get("payer") or {}).get("email")
-            description = payment.get("description")
-
-            print(f"✅ Pago {resource_id} | status={status} | amount={amount} | email={payer_email} | desc={description}", flush=True)
-
-            # TODO: aquí guarda en tu DB o dispara tu lógica
+            r = requests.get(
+                f"https://api.mercadopago.com/v1/payments/{resource_id}",
+                headers={"Authorization": f"Bearer {MP_ACCESS_TOKEN}"},
+                timeout=10,
+            )
+            print("🔎 MP payment:", r.json(), flush=True)
         except Exception as e:
-            print("⚠️ Error consultando pago:", e, flush=True)
+            print("⚠️ Error consultando MP:", e, flush=True)
 
-    # 4) Responder 200 para que MP no reintente
-    return "ok", 200
-
+    # 3) Siempre devolver 200 lo más rápido posible
+    return ("", 200)
 
 @app.route("/", methods=["GET"])
 def home():
