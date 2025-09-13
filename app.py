@@ -23,19 +23,11 @@ def get_conn():
         options=f"-c search_path={DB_SCHEMA},public"
     )
 
-def _to_bigint_or_none(val):
-    if val is None:
-        return None
-    try:
-        return int(str(val))
-    except Exception:
-        return None
-
 def save_webhook_to_events(payload: dict):
-    """Inserta en baikarool.webhook_events."""
+    """Inserta el webhook en la tabla webhook_events (prueba: ignoramos payment_id)."""
     topic = payload.get("topic") or "unknown"
 
-    # event_id: de payload si viene, si no generamos uno
+    # event_id: si no viene, generamos uno
     event_id = (
         payload.get("id")
         or payload.get("event_id")
@@ -43,12 +35,8 @@ def save_webhook_to_events(payload: dict):
         or f"{topic}-{int(time.time()*1000)}"
     )
 
-    # payment_id: si viene y es numérico
-    payment_id = (
-        _to_bigint_or_none(payload.get("payment_id"))
-        or _to_bigint_or_none(payload.get("id"))
-        or _to_bigint_or_none((payload.get("data") or {}).get("id"))
-    )
+    # 👇 En pruebas ignoramos payment_id para no romper la FK
+    payment_id = None
 
     try:
         with get_conn() as conn:
@@ -58,7 +46,7 @@ def save_webhook_to_events(payload: dict):
                     INSERT INTO {DB_SCHEMA}.webhook_events
                        (event_id, topic, payment_id, received_at, attempt, raw_payload)
                     VALUES
-                       (%s,       %s,    %s,         now(),      %s,      %s::jsonb)
+                       (%s, %s, %s, now(), %s, %s::jsonb)
                     """,
                     (str(event_id), topic, payment_id, 1, json.dumps(payload))
                 )
@@ -68,7 +56,6 @@ def save_webhook_to_events(payload: dict):
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    # Armar payload unificado
     payload = {}
     if request.is_json:
         payload.update(request.get_json(silent=True) or {})
