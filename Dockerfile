@@ -22,4 +22,4 @@ ENV PORT=8080
 ENV PYTHONUNBUFFERED=1
 
 # Arranque con gunicorn
-CMD ["sh","-c","gunicorn -b :${PORT:-8080} main:app"]
+CMD ["sh","-c","gunicorn -b :${PORT:-8080} app:app"]
