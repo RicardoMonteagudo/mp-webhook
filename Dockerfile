@@ -1,25 +1,26 @@
-# Imagen base liviana con Python 3.12
+# Imagen base
 FROM python:3.12-slim
 
-# Instalar dependencias necesarias para psycopg2
-RUN apt-get update && apt-get install -y build-essential libpq-dev && rm -rf /var/lib/apt/lists/*
+# Paquetes nativos para psycopg2
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential libpq-dev \
+  && rm -rf /var/lib/apt/lists/*
 
-# Crear directorio de trabajo
 WORKDIR /app
 
-# Copiar requirements e instalar
+# Dependencias
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copiar código fuente
+# Código
 COPY . .
 
-# Directorio requerido para el socket de Cloud SQL
+# Directorio para el socket de Cloud SQL
 RUN mkdir -p /cloudsql
 
-# Puerto (Cloud Run lo expone con $PORT)
+# Vars básicas
 ENV PORT=8080
 ENV PYTHONUNBUFFERED=1
 
-# Arranque con gunicorn
+# Gunicorn (archivo se llama app.py → app:app)
 CMD ["sh","-c","gunicorn -b :${PORT:-8080} app:app"]
