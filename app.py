@@ -146,24 +146,6 @@ def map_antifraud_row(mp: dict) -> dict:
         "risk_reason": _json(mp, "risk_execution_result", "reason") or mp.get("risk_reason"),
     }
 
-def rows_refunds_from_payment(mp: dict) -> list[dict]:
-    """Construye filas para payment_refunds si el JSON trae refunds."""
-    out = []
-    refunds = mp.get("refunds")
-    if isinstance(refunds, list):
-        for r in refunds:
-            row = {
-                "refund_id": str(r.get("id")) if r.get("id") is not None else None,
-                "payment_id": _to_bigint_or_none(mp.get("id")),
-                "amount": _to_dec_or_none(r.get("amount")),
-                "status": r.get("status"),
-                "reason": r.get("reason"),
-                "source": r.get("source"),
-            }
-            if row["refund_id"] and row["payment_id"]:
-                out.append(row)
-    return out
-
 # ===== Webhook helpers =====
 def save_webhook_event_first(payload: dict, event_id: str, topic: str):
     upsert_row("webhook_events", ["event_id"], {
@@ -178,8 +160,8 @@ def finalize_webhook_event(event_id: str, fields: dict):
 def process_payment_event(event_id: str, payload: dict):
     save_webhook_event_first(payload, event_id, "payment")
     pid = _to_bigint_or_none(payload.get("payment_id")) \
-          or _to_bigint_or_none(payload.get("id")) \
-          or _to_bigint_or_none(_json(payload, "data", "id"))
+          or _to_bigint_or_none(_json(payload, "data", "id")) \
+          or _to_bigint_or_none(payload.get("id"))
     if not pid:
         finalize_webhook_event(event_id, {"processed_at": psy_now()}); return
 
@@ -187,30 +169,21 @@ def process_payment_event(event_id: str, payload: dict):
     if not mp_payment:
         finalize_webhook_event(event_id, {"processed_at": psy_now()}); return
 
-    # payments
     if upsert_row("payments", ["payment_id"], map_payments_row(mp_payment)):
-        # payloads
         upsert_row("payment_payloads", ["payment_id"], map_payment_payloads_row(pid, mp_payment))
-        # antifraud
         upsert_row("payment_antifraud", ["payment_id"], map_antifraud_row(mp_payment))
-        # refunds (si vienen)
-        for rf in rows_refunds_from_payment(mp_payment):
-            upsert_row("payment_refunds", ["refund_id"], rf)
-        # enlazar evento
         finalize_webhook_event(event_id, {"payment_id": pid, "processed_at": psy_now()})
     else:
         finalize_webhook_event(event_id, {"processed_at": psy_now()})
 
 def process_chargeback_event(event_id: str, payload: dict):
     save_webhook_event_first(payload, event_id, "chargebacks")
-    # Intentamos obtener ids mínimos desde el payload
     cb_id = str(payload.get("id") or payload.get("chargeback_id") or "")
     pid   = _to_bigint_or_none(payload.get("payment_id")) \
             or _to_bigint_or_none(_json(payload, "data", "payment_id")) \
             or _to_bigint_or_none(_json(payload, "chargeback", "payment_id"))
     status = payload.get("status") or _json(payload, "data", "status") or _json(payload, "chargeback", "status")
     reason = payload.get("reason") or payload.get("reason_code") or _json(payload, "data", "reason_code")
-
     if cb_id and pid:
         upsert_row("payment_chargebacks", ["chargeback_id"], {
             "chargeback_id": cb_id, "payment_id": pid,
@@ -232,7 +205,6 @@ def webhook():
         elif topic == "chargebacks":
             process_chargeback_event(event_id, p)
         else:
-            # registra igual el evento “desconocido”
             save_webhook_event_first(p, event_id, topic or "unknown")
             finalize_webhook_event(event_id, {"processed_at": psy_now()})
     except Exception as e:
@@ -242,4 +214,4 @@ def webhook():
 
 @app.route("/", methods=["GET"])
 def home():
-    return "OK — payments/payloads/antifraud/refunds/chargebacks listas 🚀", 200
+    return "OK — payments/payloads/antifraud + chargebacks (sin refunds) 🚀", 200
