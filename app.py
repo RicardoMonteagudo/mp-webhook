@@ -13,11 +13,10 @@ DB_NAME    = os.environ["DB_NAME"]
 DB_USER    = os.environ["DB_USER"]
 DB_PASS    = os.environ["DB_PASS"]
 DB_SCHEMA  = os.getenv("DB_SCHEMA", "baikarool")
-MP_TOKEN   = os.getenv("MP_ACCESS_TOKEN")  # opcional, pero necesario para /v1/payments/{id}
+MP_TOKEN   = os.getenv("MP_ACCESS_TOKEN")  # necesario para /v1/payments/{id}
 
 # ========= DB =========
 def get_conn():
-    """Conexión a Cloud SQL (Postgres) por socket unix."""
     return psycopg2.connect(
         host=f"/cloudsql/{INSTANCE}",
         dbname=DB_NAME,
@@ -43,10 +42,6 @@ def get_table_columns(table: str) -> set:
         return {r[0] for r in cur.fetchall()}
 
 def upsert_row(table: str, pk_cols: list[str], row: dict):
-    """
-    UPSERT seguro: solo columnas existentes y con valor.
-    Evita sobreescribir con NULL y no truena si faltan columnas.
-    """
     cols_in_db = get_table_columns(table)
     data = {k: v for k, v in row.items() if v is not None and k in cols_in_db}
     if not data:
@@ -121,9 +116,45 @@ def get_payment_from_mp(payment_id: int) -> dict | None:
     return None
 
 # ========= Mapeos =========
+def _json(mp, *path):
+    cur = mp
+    for k in path:
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(k)
+    return cur
+
 def map_payments_row(mp: dict) -> dict:
-    # Mapea SOLO a columnas que existen en tu tabla (upsert filtra de todas formas)
+    """
+    Mapea los campos que acordamos (si existen en la respuesta de MP):
+    - neto, comisiones, granularidad, POS/terminal, cuotas detalladas, tipo de operación, tiempos, moneda de liquidación
+    """
+    # Finanzas
+    neto = _to_decimal_or_none(_json(mp, "transaction_details", "net_received_amount"))
+    # fee_details es una lista; sumamos amounts si vienen
+    fees = _json(mp, "fee_details")
+    fee_amount = None
+    if isinstance(fees, list) and fees:
+        try:
+            fee_amount = sum(Decimal(str(i.get("amount"))) for i in fees if i.get("amount") is not None)
+        except Exception:
+            fee_amount = None
+
+    # POS / Terminal: MP puede exponer pos_id/store_id arriba o dentro de point_of_interaction
+    pos_id = mp.get("pos_id") or _json(mp, "point_of_interaction", "business_info", "pos_id")
+    store_id = mp.get("store_id") or _json(mp, "point_of_interaction", "business_info", "store_id")
+
+    # Cuotas detalladas (si existe un monto por cuota en transaction_details)
+    installment_amount = _to_decimal_or_none(_json(mp, "transaction_details", "installment_amount"))
+
+    # Fechas de proceso
+    date_accredited = mp.get("money_release_date") or mp.get("date_accredited")
+
+    # Moneda de liquidación (si MP la expone en algún subobjeto; si no, queda NULL)
+    settlement_currency = _json(mp, "transaction_details", "settlement_currency") or mp.get("settlement_currency")
+
     return {
+        # ya existentes en tu tabla
         "payment_id": _to_bigint_or_none(mp.get("id")),
         "status": (mp.get("status") or "").lower() or None,
         "status_detail": mp.get("status_detail"),
@@ -138,17 +169,25 @@ def map_payments_row(mp: dict) -> dict:
         "external_reference": mp.get("external_reference"),
         "order_id": ((mp.get("order") or {}).get("id")) if isinstance(mp.get("order"), dict) else None,
         "live_mode": mp.get("live_mode"),
-        # created_at / updated_at son manejados por DB si las tienes con defaults/triggers; upsert las deja intactas
+
+        # nuevos campos
+        "payment_type_id": mp.get("payment_type_id"),
+        "issuer_id": (mp.get("issuer_id") or _json(mp, "issuer", "id")),
+        "pos_id": pos_id,
+        "store_id": store_id,
+        "installment_amount": installment_amount,
+        "operation_type": mp.get("operation_type"),
+        "date_accredited": date_accredited,
+        "net_received_amount": neto,
+        "fee_amount": fee_amount,
+        "settlement_currency": settlement_currency,
     }
 
 def map_payment_payloads_row(payment_id: int, payload: dict) -> dict:
-    """
-    Tu tabla payment_payloads tiene 'payment_id' (PK/FK) y 'raw_payment' (jsonb NOT NULL).
-    """
+    # Tu tabla exige 'raw_payment' NOT NULL
     return {
         "payment_id": payment_id,
-        "raw_payment": json.dumps(payload),  # 👈 columna correcta, NOT NULL
-        # 'fetched_at' tiene DEFAULT now() en DB (si existe)
+        "raw_payment": json.dumps(payload),
     }
 
 def map_antifraud_row(mp: dict) -> dict:
@@ -159,33 +198,26 @@ def map_antifraud_row(mp: dict) -> dict:
         "card_first_six_digits": card.get("first_six_digits"),
         "card_last_four_digits": card.get("last_four_digits"),
         "cardholder_name": cardholder.get("name"),
-        # Si capturas esto en tu checkout propio, podrás poblarlos también:
-        # "payer_ip": ...,
-        # "user_agent": ...,
-        # "device_id": ...,
-        # "ticket_number": ...,
+        # Riesgo/flags si MP los expone
+        "risk_level": _json(mp, "risk_execution_result", "level") or mp.get("risk_level"),
+        "risk_reason": _json(mp, "risk_execution_result", "reason") or mp.get("risk_reason"),
     }
 
-# ========= Webhook persistence =========
+# ========= Webhook =========
 def save_webhook_event_first(payload: dict, event_id: str, topic: str):
-    """
-    Insert inicial SIEMPRE con payment_id=NULL para no romper FK.
-    """
     row = {
         "event_id": event_id,
         "topic": topic or "unknown",
-        "payment_id": None,                     # 👈 clave para no violar la FK
-        "raw_payload": json.dumps(payload),     # tu tabla webhook_events sí tiene raw_payload jsonb
-        "attempt": 1                            # si existe, lo usará; si no, lo ignora
+        "payment_id": None,
+        "raw_payload": json.dumps(payload),
+        "attempt": 1
     }
     upsert_row("webhook_events", ["event_id"], row)
 
 def finalize_webhook_event(event_id: str, fields: dict):
     update_row_fields("webhook_events", "event_id", event_id, fields)
 
-# ========= Flujo principal =========
 def process_payment_flow(event_id: str, topic: str, webhook_payload: dict):
-    # 1) Guardar SIEMPRE el evento con payment_id=NULL
     save_webhook_event_first(webhook_payload, event_id, topic)
 
     pid = (
@@ -199,10 +231,8 @@ def process_payment_flow(event_id: str, topic: str, webhook_payload: dict):
         print(f"ℹ️ Webhook {event_id} sin payment_id; fin.", flush=True)
         return
 
-    # 2) Obtener el payment desde MP (si el id es real y tienes token)
     mp_payment = get_payment_from_mp(pid)
 
-    # 3) Si obtuvimos payment → upsert en payments
     payments_ok = False
     if mp_payment:
         try:
@@ -212,7 +242,6 @@ def process_payment_flow(event_id: str, topic: str, webhook_payload: dict):
         except Exception as e:
             print("⚠️ upsert payments falló:", e, flush=True)
 
-    # 4) SOLO si payments_ok → guardar payload de la API en payment_payloads.raw_payment
     if payments_ok and mp_payment:
         try:
             upsert_row("payment_payloads", ["payment_id"], map_payment_payloads_row(pid, mp_payment))
@@ -220,20 +249,16 @@ def process_payment_flow(event_id: str, topic: str, webhook_payload: dict):
         except Exception as e:
             print("⚠️ upsert payment_payloads falló:", e, flush=True)
 
-        # Antifraude (opcional, no sensible)
         try:
             upsert_row("payment_antifraud", ["payment_id"], map_antifraud_row(mp_payment))
             print(f"💾 payment_antifraud upsert ok (payment_id={pid})", flush=True)
         except Exception as e:
             print("⚠️ upsert payment_antifraud falló:", e, flush=True)
 
-        # ✅ Ya que existe payments, ahora sí actualizamos el evento con payment_id
         finalize_webhook_event(event_id, {"payment_id": pid, "processed_at": psy_now()})
     else:
-        # No se pudo obtener/guardar payment → NO tocar payment_id del evento (evita violar la FK)
-        status = "payment_not_found" if not mp_payment else "payments_upsert_failed"
         finalize_webhook_event(event_id, {"processed_at": psy_now()})
-        print(f"ℹ️ {status} (event_id={event_id}, payment_id={pid})", flush=True)
+        print(f"ℹ️ payment no disponible/guardado (event_id={event_id}, payment_id={pid})", flush=True)
 
 # ========= Endpoints =========
 @app.route("/webhook", methods=["POST"])
@@ -251,7 +276,6 @@ def webhook():
     try:
         process_payment_flow(event_id, topic, payload)
     except Exception as e:
-        # Estado final si algo revienta
         finalize_webhook_event(event_id, {"processed_at": psy_now()})
         print("❌ Error procesando webhook:", e, flush=True)
 
@@ -259,7 +283,7 @@ def webhook():
 
 @app.route("/", methods=["GET"])
 def home():
-    return "OK — Webhook listo con payments/payloads/antifraud (robusto) 🚀", 200
+    return "OK — Webhook + payments + payloads + antifraud (ampliado) 🚀", 200
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
