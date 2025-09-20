@@ -22,16 +22,30 @@ MQTT_USER  = os.environ["baikarool_MQTT_USER"]
 MQTT_PASS  = os.environ["baikarool_MQTT_PASS"]
 MQTT_TOPIC = os.environ["baikarool_MQTT_TOPIC"]
 
+#def mqtt_publish(msg: dict):
+ #   try:
+  #      c = mqtt.Client(client_id="cloudrun-pub", protocol=mqtt.MQTTv5)
+   #     c.username_pw_set(MQTT_USER, MQTT_PASS)   # 🔑 user/pass
+    #    c.tls_set()                               # 🔒 TLS en 8883
+     #   c.connect(MQTT_HOST, MQTT_PORT, keepalive=30)
+      #  c.publish(MQTT_TOPIC, json.dumps(msg), qos=1)
+       # c.disconnect()
+    #except Exception as e:
+     #   print("MQTT error:", e, flush=True)
 def mqtt_publish(msg: dict):
     try:
-        c = mqtt.Client(client_id="cloudrun-pub", protocol=mqtt.MQTTv5)
-        c.username_pw_set(MQTT_USER, MQTT_PASS)   # 🔑 user/pass
-        c.tls_set()                               # 🔒 TLS en 8883
+        print(f"MQTT → {MQTT_HOST}:{MQTT_PORT} topic={MQTT_TOPIC}", flush=True)
+        c = mqtt.Client(client_id="cloudrun-pub", protocol=mqtt.MQTTv311)  # 👈 v3.1.1
+        c.username_pw_set(MQTT_USER, MQTT_PASS)
+        c.tls_set()                 # usa CA del sistema
+        c.tls_insecure_set(True)    # 👈 TEMP: evita fallo de cert en Cloud Run
         c.connect(MQTT_HOST, MQTT_PORT, keepalive=30)
-        c.publish(MQTT_TOPIC, json.dumps(msg), qos=1)
+        r = c.publish(MQTT_TOPIC, json.dumps(msg), qos=1)
+        r.wait_for_publish()
+        print("MQTT published:", r.is_published(), flush=True)
         c.disconnect()
     except Exception as e:
-        print("MQTT error:", e, flush=True)
+        print("MQTT error:", repr(e), flush=True)
 
 def is_accredited_in_sql(pid: int) -> bool:
     with get_conn() as conn, conn.cursor() as cur:
