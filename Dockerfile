@@ -22,5 +22,6 @@ RUN mkdir -p /cloudsql
 ENV PORT=8080
 ENV PYTHONUNBUFFERED=1
 
-# Gunicorn (archivo se llama app.py → app:app)
-CMD ["sh","-c","gunicorn -b :${PORT:-8080} app:app"]
+# Gunicorn (archivo se llama app.py → app:app)]
+CMD ["sh","-c","gunicorn -w 2 -k sync -t 120 -b :${PORT:-8080} app:app"]
+
