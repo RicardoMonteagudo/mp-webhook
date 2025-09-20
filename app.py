@@ -16,19 +16,19 @@ MP_TOKEN   = os.getenv("MP_ACCESS_TOKEN")
 
 # ===== MOSQUITTO =====
 
-baikarool_MQTT_HOST  = os.environ["MQTT_HOST"]
-baikarool_MQTT_PORT  = int(os.environ["MQTT_PORT"])
-baikarool_MQTT_USER  = os.environ["MQTT_USER"]
-baikarool_MQTT_PASS  = os.environ["MQTT_PASS"]
-baikarool_MQTT_TOPIC = os.environ["MQTT_TOPIC"]
+MQTT_HOST  = os.environ["baikarool_MQTT_HOST"]
+MQTT_PORT  = int(os.environ["baikarool_MQTT_PORT"])
+MQTT_USER  = os.environ["baikarool_MQTT_USER"]
+MQTT_PASS  = os.environ["baikarool_MQTT_PASS"]
+MQTT_TOPIC = os.environ["baikarool_MQTT_TOPIC"]
 
 def mqtt_publish(msg: dict):
     try:
         c = mqtt.Client(client_id="cloudrun-pub", protocol=mqtt.MQTTv5)
-        c.username_pw_set(baikarool_MQTT_USER, baikarool_MQTT_PASS)   # 🔑 user/pass
+        c.username_pw_set(MQTT_USER, MQTT_PASS)   # 🔑 user/pass
         c.tls_set()                               # 🔒 TLS en 8883
-        c.connect(baikarool_MQTT_HOST, baikarool_MQTT_PORT, keepalive=30)
-        c.publish(baikarool_MQTT_TOPIC, json.dumps(msg), qos=1)
+        c.connect(MQTT_HOST, MQTT_PORT, keepalive=30)
+        c.publish(MQTT_TOPIC, json.dumps(msg), qos=1)
         c.disconnect()
     except Exception as e:
         print("MQTT error:", e, flush=True)
