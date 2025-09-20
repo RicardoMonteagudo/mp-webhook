@@ -23,5 +23,5 @@ ENV PORT=8080
 ENV PYTHONUNBUFFERED=1
 
 # Gunicorn (archivo se llama app.py → app:app)]
-CMD ["sh","-c","gunicorn -w 2 -k sync -t 120 -b :${PORT:-8080} app:app"]
+CMD ["sh","-c","gunicorn -w 2 -k gthread --threads 8 -t 60 --access-logfile - --error-logfile - -b :${PORT:-8080} app:app"]
 
