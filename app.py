@@ -245,3 +245,9 @@ def webhook():
 @app.route("/", methods=["GET"])
 def home():
     return "OK — payments/payloads/antifraud + chargebacks (sin refunds) 🚀", 200
+
+@app.route("/test-blink", methods=["GET"])
+def test_blink():
+    print(f"MQTT test → {MQTT_TOPIC}", flush=True)
+    mqtt_publish({"type":"blink3","from":"test"})
+    return ("ok", 200)
