@@ -196,7 +196,7 @@ def process_payment_event(event_id: str, payload: dict):
         finalize_webhook_event(event_id, {"payment_id": pid, "processed_at": psy_now()})
 
         if is_accredited_in_sql(pid):
-        mqtt_publish({"type":"blink3","payment_id": pid})
+            mqtt_publish({"type":"blink3","payment_id": pid})
         
     else:
         finalize_webhook_event(event_id, {"processed_at": psy_now()})
