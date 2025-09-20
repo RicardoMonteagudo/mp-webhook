@@ -16,11 +16,11 @@ MP_TOKEN   = os.getenv("MP_ACCESS_TOKEN")
 
 # ===== MOSQUITTO =====
 
-MQTT_HOST  = os.environ["MQTT_HOST"]
-MQTT_PORT  = int(os.environ["MQTT_PORT"])
-MQTT_USER  = os.environ["MQTT_USER"]
-MQTT_PASS  = os.environ["MQTT_PASS"]
-MQTT_TOPIC = os.getenv("MQTT_TOPIC", "baikarool/test")
+baikarool_MQTT_HOST  = os.environ["MQTT_HOST"]
+baikarool_MQTT_PORT  = int(os.environ["MQTT_PORT"])
+baikarool_MQTT_USER  = os.environ["MQTT_USER"]
+baikarool_MQTT_PASS  = os.environ["MQTT_PASS"]
+baikarool_MQTT_TOPIC = os.environ["MQTT_TOPIC"]
 
 def mqtt_publish(msg: dict):
     try:
