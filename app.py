@@ -2,6 +2,7 @@ from flask import Flask, request
 import os, json, time
 import psycopg2, requests
 from decimal import Decimal
+import paho.mqtt.client as mqtt
 
 app = Flask(__name__)
 
@@ -12,6 +13,26 @@ DB_USER    = os.environ["DB_USER"]
 DB_PASS    = os.environ["DB_PASS"]
 DB_SCHEMA  = os.getenv("DB_SCHEMA", "baikarool")
 MP_TOKEN   = os.getenv("MP_ACCESS_TOKEN")
+
+# ===== MOSQUITTO =====
+MQTT_HOST  = os.getenv("MQTT_HOST", "broker.emqx.io")
+MQTT_PORT  = int(os.getenv("MQTT_PORT", "1883"))
+MQTT_TOPIC = os.getenv("MQTT_TOPIC", "baikarool/test")
+
+def mqtt_publish(msg: dict):
+    try:
+        c = mqtt.Client(client_id="cloudrun-pub", protocol=mqtt.MQTTv5)
+        c.connect(MQTT_HOST, MQTT_PORT, keepalive=30)
+        c.publish(MQTT_TOPIC, json.dumps(msg), qos=1)
+        c.disconnect()
+    except Exception as e:
+        print("MQTT error:", e, flush=True)
+
+def is_accredited_in_sql(pid: int) -> bool:
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(f"SELECT status, status_detail FROM {DB_SCHEMA}.payments WHERE payment_id=%s", (pid,))
+        r = cur.fetchone()
+        return r and (r[0] or "").lower()=="approved" and (r[1] or "").lower()=="accredited"
 
 # ===== DB =====
 def get_conn():
@@ -173,6 +194,10 @@ def process_payment_event(event_id: str, payload: dict):
         upsert_row("payment_payloads", ["payment_id"], map_payment_payloads_row(pid, mp_payment))
         upsert_row("payment_antifraud", ["payment_id"], map_antifraud_row(mp_payment))
         finalize_webhook_event(event_id, {"payment_id": pid, "processed_at": psy_now()})
+
+        if is_accredited_in_sql(pid):
+        mqtt_publish({"type":"blink3","payment_id": pid})
+        
     else:
         finalize_webhook_event(event_id, {"processed_at": psy_now()})
 
