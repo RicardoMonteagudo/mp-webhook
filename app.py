@@ -3,6 +3,7 @@ import os, json, time
 import psycopg2, requests
 from decimal import Decimal
 import paho.mqtt.client as mqtt
+from threading import Thread
 
 app = Flask(__name__)
 
@@ -262,6 +263,5 @@ def home():
 
 @app.route("/test-blink", methods=["GET"])
 def test_blink():
-    print(f"MQTT test → {MQTT_TOPIC}", flush=True)
-    mqtt_publish({"type":"blink3","from":"test"})
-    return ("ok", 200)
+    Thread(target=mqtt_publish, args=({"type":"blink3","from":"test"},), daemon=True).start()
+    return ("ok", 200, {"Content-Type": "text/plain"})
