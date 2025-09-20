@@ -15,13 +15,18 @@ DB_SCHEMA  = os.getenv("DB_SCHEMA", "baikarool")
 MP_TOKEN   = os.getenv("MP_ACCESS_TOKEN")
 
 # ===== MOSQUITTO =====
-MQTT_HOST  = os.getenv("MQTT_HOST", "broker.emqx.io")
-MQTT_PORT  = int(os.getenv("MQTT_PORT", "1883"))
+
+MQTT_HOST  = os.environ["MQTT_HOST"]
+MQTT_PORT  = int(os.environ["MQTT_PORT"])
+MQTT_USER  = os.environ["MQTT_USER"]
+MQTT_PASS  = os.environ["MQTT_PASS"]
 MQTT_TOPIC = os.getenv("MQTT_TOPIC", "baikarool/test")
 
 def mqtt_publish(msg: dict):
     try:
         c = mqtt.Client(client_id="cloudrun-pub", protocol=mqtt.MQTTv5)
+        c.username_pw_set(MQTT_USER, MQTT_PASS)   # 🔑 user/pass
+        c.tls_set()                               # 🔒 TLS en 8883
         c.connect(MQTT_HOST, MQTT_PORT, keepalive=30)
         c.publish(MQTT_TOPIC, json.dumps(msg), qos=1)
         c.disconnect()
